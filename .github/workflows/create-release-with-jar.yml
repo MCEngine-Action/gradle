@@ -26,10 +26,15 @@ jobs:
           java-version: 17
           distribution: temurin
 
-      - name: Set up Gradle
+      - name: Set up Gradle (fallback if no wrapper)
         uses: gradle/actions/setup-gradle@v3
 
-      - name: Calculate today's version
+      - name: Fetch repository
+        run: |
+          git fetch origin
+          git reset --hard origin/master
+
+      - name: Calculate expected version
         id: version
         run: |
           tz="Asia/Bangkok"
@@ -60,19 +65,27 @@ jobs:
 
           echo "version=$version" >> $GITHUB_OUTPUT
 
-      - name: Build all JARs (wrapper fallback)
+      - name: Make gradlew executable (if exists)
         run: |
-          if [ -f ./gradlew ] && [ -f ./gradle/wrapper/gradle-wrapper.jar ]; then
-            echo "✔ Using Gradle Wrapper"
+          if [ -f ./gradlew ]; then
             chmod +x ./gradlew
-            ./gradlew :server:spigotmc:engine:build :server:papermc:engine:build
-          else
-            echo "⚠ Gradle Wrapper not found. Falling back to system Gradle."
-            gradle :server:spigotmc:engine:build :server:papermc:engine:build
           fi
 
-      - name: Find and copy JARs
-        id: jars
+      - name: Build JARs
+        run: |
+          if [ -f ./gradlew ] && [ -f ./gradle/wrapper/gradle-wrapper.jar ]; then
+            ./gradlew :server:spigotmc:engine:build :server:papermc:engine:build
+          else
+            echo "Gradle wrapper not found. Falling back to system Gradle."
+            gradle :server:spigotmc:engine:build :server:papermc:engine:build
+          fi
+        env:
+          USER_GIT_NAME: ${{ github.actor }}
+          USER_GITHUB_TOKEN: ${{ secrets.USER_GITHUB_TOKEN }}
+          GITHUB_ACTOR: ${{ github.actor }}
+
+      - name: Copy JARs to upload folder
+        id: collect
         run: |
           mkdir -p upload
           find server/{spigotmc,papermc}/engine/build/libs/ -name "*.jar" -exec cp {} upload/ \;
@@ -80,14 +93,38 @@ jobs:
           find upload -type f >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
 
-      - name: Create GitHub Release and upload JARs
+      - name: Create GitHub Release
+        if: success()
+        run: |
+          version="${{ steps.version.outputs.version }}"
+          tag="$version"
+          body="Automated release for version $version"
+
+          git config user.name "agent-mcengine"
+          git config user.email "agent-mcengine@users.noreply.github.com"
+          git tag "$tag"
+          git push origin "$tag"
+
+          curl -s -X POST https://api.github.com/repos/${{ github.repository }}/releases \
+            -H "Authorization: token ${{ secrets.USER_GITHUB_TOKEN }}" \
+            -H "Content-Type: application/json" \
+            -d @- <<EOF
+          {
+            "tag_name": "$tag",
+            "name": "$tag",
+            "body": "$body",
+            "draft": false,
+            "prerelease": false
+          }
+          EOF
+
+      - name: Upload JARs to GitHub Release
         uses: softprops/action-gh-release@v1
         with:
           tag_name: ${{ steps.version.outputs.version }}
           name: Release ${{ steps.version.outputs.version }}
           body: |
-            Automated release for version ${{ steps.version.outputs.version }}.
-            Includes JARs for SpigotMC and PaperMC.
+            Includes JARs built for SpigotMC and PaperMC engines.
           files: upload/*.jar
         env:
           GITHUB_TOKEN: ${{ secrets.USER_GITHUB_TOKEN }}
