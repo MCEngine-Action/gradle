@@ -26,15 +26,8 @@ jobs:
           java-version: 17
           distribution: temurin
 
-      - name: Make gradlew executable
-        run: |
-          if [ -f ./gradlew ]; then
-            chmod +x ./gradlew
-          fi
-
-      - name: Build all JARs
-        run: |
-          ./gradlew :server:spigotmc:engine:build :server:papermc:engine:build
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v3
 
       - name: Calculate today's version
         id: version
@@ -67,14 +60,22 @@ jobs:
 
           echo "version=$version" >> $GITHUB_OUTPUT
 
-      - name: Find all JARs to attach
+      - name: Build all JARs (wrapper fallback)
+        run: |
+          if [ -f ./gradlew ] && [ -f ./gradle/wrapper/gradle-wrapper.jar ]; then
+            echo "✔ Using Gradle Wrapper"
+            chmod +x ./gradlew
+            ./gradlew :server:spigotmc:engine:build :server:papermc:engine:build
+          else
+            echo "⚠ Gradle Wrapper not found. Falling back to system Gradle."
+            gradle :server:spigotmc:engine:build :server:papermc:engine:build
+          fi
+
+      - name: Find and copy JARs
         id: jars
         run: |
           mkdir -p upload
           find server/{spigotmc,papermc}/engine/build/libs/ -name "*.jar" -exec cp {} upload/ \;
-          ls -l upload
-          echo "Found JARs:"
-          find upload -type f
           echo "files<<EOF" >> $GITHUB_OUTPUT
           find upload -type f >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
@@ -86,7 +87,7 @@ jobs:
           name: Release ${{ steps.version.outputs.version }}
           body: |
             Automated release for version ${{ steps.version.outputs.version }}.
-            This includes built JARs from both SpigotMC and PaperMC engines.
+            Includes JARs for SpigotMC and PaperMC.
           files: upload/*.jar
         env:
           GITHUB_TOKEN: ${{ secrets.USER_GITHUB_TOKEN }}
