@@ -1,0 +1,92 @@
+name: Create GitHub Release With Built JARs
+
+on:
+  workflow_call:
+    inputs:
+      repo-name:
+        required: true
+        type: string
+    secrets:
+      USER_GITHUB_TOKEN:
+        required: true
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+        with:
+          token: ${{ secrets.USER_GITHUB_TOKEN }}
+
+      - name: Set up Java
+        uses: actions/setup-java@v3
+        with:
+          java-version: 17
+          distribution: temurin
+
+      - name: Make gradlew executable
+        run: |
+          if [ -f ./gradlew ]; then
+            chmod +x ./gradlew
+          fi
+
+      - name: Build all JARs
+        run: |
+          ./gradlew :server:spigotmc:engine:build :server:papermc:engine:build
+
+      - name: Calculate today's version
+        id: version
+        run: |
+          tz="Asia/Bangkok"
+          year=$(TZ=$tz date +"%Y")
+          month=$(TZ=$tz date +"%-m")
+          day=$(TZ=$tz date +"%-d")
+
+          case "$month" in
+            1)  m1=0; m2=1 ;;
+            2)  m1=0; m2=2 ;;
+            3)  m1=0; m2=3 ;;
+            4)  m1=0; m2=4 ;;
+            5)  m1=0; m2=5 ;;
+            6)  m1=0; m2=6 ;;
+            7)  m1=0; m2=7 ;;
+            8)  m1=0; m2=8 ;;
+            9)  m1=0; m2=9 ;;
+            10) m1=1; m2=0 ;;
+            11) m1=1; m2=1 ;;
+            12) m1=1; m2=2 ;;
+          esac
+
+          if [ "$day" -eq 1 ]; then
+            version="$year.$m1.$m2"
+          else
+            version="$year.$m1.$m2-$day"
+          fi
+
+          echo "version=$version" >> $GITHUB_OUTPUT
+
+      - name: Find all JARs to attach
+        id: jars
+        run: |
+          mkdir -p upload
+          find server/{spigotmc,papermc}/engine/build/libs/ -name "*.jar" -exec cp {} upload/ \;
+          ls -l upload
+          echo "Found JARs:"
+          find upload -type f
+          echo "files<<EOF" >> $GITHUB_OUTPUT
+          find upload -type f >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Create GitHub Release and upload JARs
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ steps.version.outputs.version }}
+          name: Release ${{ steps.version.outputs.version }}
+          body: |
+            Automated release for version ${{ steps.version.outputs.version }}.
+            This includes built JARs from both SpigotMC and PaperMC engines.
+          files: upload/*.jar
+        env:
+          GITHUB_TOKEN: ${{ secrets.USER_GITHUB_TOKEN }}
