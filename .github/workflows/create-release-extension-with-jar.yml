@@ -65,6 +65,23 @@ jobs:
 
           echo "version=$version" >> $GITHUB_OUTPUT
 
+      - name: Update gradle.properties with expected version
+        run: |
+          version="${{ steps.version.outputs.version }}"
+          echo "Updating gradle.properties to version: $version"
+
+          tmpfile=$(mktemp)
+          while IFS= read -r line; do
+            if [[ "$line" =~ ^(mcengine.*\.version)=(.*)$ ]]; then
+              key="${BASH_REMATCH[1]}"
+              echo "$key=$version" >> "$tmpfile"
+              echo "✎ Set $key to $version"
+            else
+              echo "$line" >> "$tmpfile"
+            fi
+          done < gradle.properties
+          mv "$tmpfile" gradle.properties
+
       - name: Make gradlew executable (if exists)
         run: |
           if [ -f ./gradlew ]; then
