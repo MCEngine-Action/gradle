@@ -1,0 +1,153 @@
+name: Create GitHub Release With Built Extension JAR
+
+on:
+  workflow_call:
+    inputs:
+      repo-name:
+        required: true
+        type: string
+    secrets:
+      USER_GITHUB_TOKEN:
+        required: true
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+        with:
+          token: ${{ secrets.USER_GITHUB_TOKEN }}
+
+      - name: Set up Java
+        uses: actions/setup-java@v3
+        with:
+          java-version: 21
+          distribution: temurin
+
+      - name: Set up Gradle (fallback if no wrapper)
+        uses: gradle/actions/setup-gradle@v3
+
+      - name: Fetch repository
+        run: |
+          git fetch origin
+          git reset --hard origin/master
+
+      - name: Calculate expected version
+        id: version
+        run: |
+          tz="Asia/Bangkok"
+          year=$(TZ=$tz date +"%Y")
+          month=$(TZ=$tz date +"%-m")
+          day=$(TZ=$tz date +"%-d")
+
+          case "$month" in
+            1)  m1=0; m2=1 ;;
+            2)  m1=0; m2=2 ;;
+            3)  m1=0; m2=3 ;;
+            4)  m1=0; m2=4 ;;
+            5)  m1=0; m2=5 ;;
+            6)  m1=0; m2=6 ;;
+            7)  m1=0; m2=7 ;;
+            8)  m1=0; m2=8 ;;
+            9)  m1=0; m2=9 ;;
+            10) m1=1; m2=0 ;;
+            11) m1=1; m2=1 ;;
+            12) m1=1; m2=2 ;;
+          esac
+
+          if [ "$day" -eq 1 ]; then
+            version="$year.$m1.$m2"
+          else
+            version="$year.$m1.$m2-$day"
+          fi
+
+          echo "version=$version" >> $GITHUB_OUTPUT
+
+      - name: Update gradle.properties with expected version
+        run: |
+          version="${{ steps.version.outputs.version }}"
+          echo "Updating gradle.properties to version: $version"
+
+          tmpfile=$(mktemp)
+          while IFS= read -r line; do
+            if [[ "$line" =~ ^(mcengine.*\.version)=(.*)$ ]]; then
+              key="${BASH_REMATCH[1]}"
+              echo "$key=$version" >> "$tmpfile"
+              echo "✎ Set $key to $version"
+            else
+              echo "$line" >> "$tmpfile"
+            fi
+          done < gradle.properties
+          mv "$tmpfile" gradle.properties
+
+      - name: Update build.gradle with new version
+        run: |
+          version="${{ steps.version.outputs.version }}"
+          echo "Updating build.gradle with version $version"
+          sed -i -E "s|('io\\.github\\.mcengine:[^:]+):[^']+'|\\1:$version'|g" build.gradle
+
+      - name: Make gradlew executable (if exists)
+        run: |
+          if [ -f ./gradlew ]; then
+            chmod +x ./gradlew
+          fi
+
+      - name: Build Extension JAR
+        run: |
+          if [ -f ./gradlew ] && [ -f ./gradle/wrapper/gradle-wrapper.jar ]; then
+            ./gradlew build
+          else
+            echo "Gradle wrapper not found. Falling back to system Gradle."
+            gradle build
+          fi
+        env:
+          USER_GIT_NAME: ${{ github.actor }}
+          USER_GITHUB_TOKEN: ${{ secrets.USER_GITHUB_TOKEN }}
+          GITHUB_ACTOR: ${{ github.actor }}
+
+      - name: Copy Extension JARs to upload folder
+        id: collect
+        run: |
+          mkdir -p upload
+          find build/libs/ -name "*.jar" -exec cp {} upload/ \;
+          echo "files<<EOF" >> $GITHUB_OUTPUT
+          find upload -type f >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Create GitHub Release
+        if: success()
+        run: |
+          version="${{ steps.version.outputs.version }}"
+          tag="$version"
+          body="Automated release for version $version"
+
+          git config user.name "agent-mcengine"
+          git config user.email "agent-mcengine@users.noreply.github.com"
+          git tag "$tag"
+          git push origin "$tag"
+
+          curl -s -X POST https://api.github.com/repos/${{ github.repository }}/releases \
+            -H "Authorization: token ${{ secrets.USER_GITHUB_TOKEN }}" \
+            -H "Content-Type: application/json" \
+            -d @- <<EOF
+          {
+            "tag_name": "$tag",
+            "name": "$tag",
+            "body": "$body",
+            "draft": false,
+            "prerelease": false
+          }
+          EOF
+
+      - name: Upload JARs to GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ steps.version.outputs.version }}
+          name: Release ${{ steps.version.outputs.version }}
+          body: |
+            Includes extension JAR(s) from build/libs/.
+          files: upload/*.jar
+        env:
+          GITHUB_TOKEN: ${{ secrets.USER_GITHUB_TOKEN }}
