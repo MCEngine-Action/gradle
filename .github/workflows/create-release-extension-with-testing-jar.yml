@@ -47,10 +47,6 @@ jobs:
             chmod +x ./gradlew
           fi
 
-      - name: Print classpath JARs
-        run: |
-          ./gradlew dependencies --configuration compileClasspath
-
       - name: Build Extension JAR
         run: |
           if [ -f ./gradlew ] && [ -f ./gradle/wrapper/gradle-wrapper.jar ]; then
