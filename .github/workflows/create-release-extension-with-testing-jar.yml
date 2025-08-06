@@ -73,8 +73,11 @@ jobs:
         if: success()
         run: |
           version="${{ steps.version.outputs.version }}"
-          tag="$version"
-          body="Automated release for version $version"
+          
+          # 🔒 Clean version string: strip whitespace and invalid characters
+          tag=$(echo "$version" | tr -cd '[:alnum:]._-')
+
+          echo "Tag to create: $tag"
 
           git config user.name "agent-mcengine"
           git config user.email "agent-mcengine@users.noreply.github.com"
@@ -88,7 +91,7 @@ jobs:
           {
             "tag_name": "$tag",
             "name": "$tag",
-            "body": "$body",
+            "body": "Automated release for version $tag",
             "draft": false,
             "prerelease": false
           }
