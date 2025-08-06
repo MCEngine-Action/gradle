@@ -34,65 +34,22 @@ jobs:
           git fetch origin
           git reset --hard origin/master
 
-      - name: Calculate expected version
+      - name: Read version from gradle.properties
         id: version
         run: |
-          tz="Asia/Bangkok"
-          year=$(TZ=$tz date +"%Y")
-          month=$(TZ=$tz date +"%-m")
-          day=$(TZ=$tz date +"%-d")
-
-          case "$month" in
-            1)  m1=0; m2=1 ;;
-            2)  m1=0; m2=2 ;;
-            3)  m1=0; m2=3 ;;
-            4)  m1=0; m2=4 ;;
-            5)  m1=0; m2=5 ;;
-            6)  m1=0; m2=6 ;;
-            7)  m1=0; m2=7 ;;
-            8)  m1=0; m2=8 ;;
-            9)  m1=0; m2=9 ;;
-            10) m1=1; m2=0 ;;
-            11) m1=1; m2=1 ;;
-            12) m1=1; m2=2 ;;
-          esac
-
-          if [ "$day" -eq 1 ]; then
-            version="$year.$m1.$m2"
-          else
-            version="$year.$m1.$m2-$day"
-          fi
-
+          version=$(grep -E '^(mcengine.*\.version)=' gradle.properties | head -n1 | cut -d'=' -f2-)
+          echo "Detected version: $version"
           echo "version=$version" >> $GITHUB_OUTPUT
-
-      - name: Update gradle.properties with expected version
-        run: |
-          version="${{ steps.version.outputs.version }}"
-          echo "Updating gradle.properties to version: $version"
-
-          tmpfile=$(mktemp)
-          while IFS= read -r line; do
-            if [[ "$line" =~ ^(mcengine.*\.version)=(.*)$ ]]; then
-              key="${BASH_REMATCH[1]}"
-              echo "$key=$version" >> "$tmpfile"
-              echo "✎ Set $key to $version"
-            else
-              echo "$line" >> "$tmpfile"
-            fi
-          done < gradle.properties
-          mv "$tmpfile" gradle.properties
-
-      - name: Update build.gradle with new version
-        run: |
-          version="${{ steps.version.outputs.version }}"
-          echo "Updating build.gradle with version $version"
-          sed -i -E "s|('io\\.github\\.mcengine:[^:]+):[^']+'|\\1:$version'|g" build.gradle
 
       - name: Make gradlew executable (if exists)
         run: |
           if [ -f ./gradlew ]; then
             chmod +x ./gradlew
           fi
+
+      - name: Print classpath JARs
+        run: |
+          ./gradlew dependencies --configuration compileClasspath
 
       - name: Build Extension JAR
         run: |
