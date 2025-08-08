@@ -1,0 +1,109 @@
+name: Create GitHub Release With Built Extension JAR (paths from second action)
+
+on:
+  workflow_call:
+    inputs:
+      repo-name:
+        required: true
+        type: string
+    secrets:
+      USER_GITHUB_TOKEN:
+        required: true
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+        with:
+          token: ${{ secrets.USER_GITHUB_TOKEN }}
+
+      - name: Set up Java
+        uses: actions/setup-java@v3
+        with:
+          java-version: 21
+          distribution: temurin
+
+      - name: Set up Gradle (fallback if no wrapper)
+        uses: gradle/actions/setup-gradle@v3
+
+      - name: Fetch repository
+        run: |
+          git fetch origin
+          git reset --hard origin/master
+
+      - name: Read version from gradle.properties
+        id: version
+        run: |
+          version=$(grep -E '^(mcengine.*\.version)=' gradle.properties | head -n1 | cut -d'=' -f2-)
+          echo "Detected version: $version"
+          echo "version=$version" >> $GITHUB_OUTPUT
+
+      - name: Make gradlew executable (if exists)
+        run: |
+          if [ -f ./gradlew ]; then
+            chmod +x ./gradlew
+          fi
+
+      - name: Build Extension JAR
+        run: |
+          if [ -f ./gradlew ] && [ -f ./gradle/wrapper/gradle-wrapper.jar ]; then
+            ./gradlew build
+          else
+            echo "Gradle wrapper not found. Falling back to system Gradle."
+            gradle build
+          fi
+        env:
+          USER_GIT_NAME: ${{ github.actor }}
+          USER_GITHUB_TOKEN: ${{ secrets.USER_GITHUB_TOKEN }}
+          GITHUB_ACTOR: ${{ github.actor }}
+
+      - name: Copy JARs to upload folder (use second action paths)
+        id: collect
+        run: |
+          mkdir -p upload
+          find server/{spigotmc,papermc}/engine/build/libs/ -name "*.jar" -exec cp {} upload/ \;
+          echo "files<<EOF" >> $GITHUB_OUTPUT
+          find upload -type f >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Create GitHub Release
+        if: success()
+        run: |
+          version="${{ steps.version.outputs.version }}"
+          
+          # 🔒 Clean version string: strip whitespace and invalid characters
+          tag=$(echo "$version" | tr -cd '[:alnum:]._-')
+
+          echo "Tag to create: $tag"
+
+          git config user.name "agent-mcengine"
+          git config user.email "agent-mcengine@users.noreply.github.com"
+          git tag "$tag"
+          git push origin "$tag"
+
+          curl -s -X POST https://api.github.com/repos/${{ github.repository }}/releases \
+            -H "Authorization: token ${{ secrets.USER_GITHUB_TOKEN }}" \
+            -H "Content-Type: application/json" \
+            -d @- <<EOF
+          {
+            "tag_name": "$tag",
+            "name": "$tag",
+            "body": "Automated release for version $tag",
+            "draft": false,
+            "prerelease": false
+          }
+          EOF
+
+      - name: Upload JARs to GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ steps.version.outputs.version }}
+          name: Release ${{ steps.version.outputs.version }}
+          body: |
+            Includes JAR(s) from server/*/engine/build/libs/.
+          files: upload/*.jar
+        env:
+          GITHUB_TOKEN: ${{ secrets.USER_GITHUB_TOKEN }}
