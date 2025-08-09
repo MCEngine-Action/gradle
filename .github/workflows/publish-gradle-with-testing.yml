@@ -1,17 +1,20 @@
-name: Manual Publish to GitHub Packages
+name: Reusable GitHub Packages Publisher
 
 on:
-  workflow_dispatch:
+  workflow_call:
     inputs:
       repo-name:
-        description: 'Repository (owner/name) that owns the package (for env/metadata use)'
+        description: "Repository (owner/name) that owns the package (for env/metadata use)"
         required: true
         type: string
       ref:
-        description: 'Branch or tag to publish from'
+        description: "Branch or tag to publish from"
         required: false
-        default: 'master'
+        default: "master"
         type: string
+    secrets:
+      USER_GITHUB_TOKEN:
+        required: true
 
 permissions:
   contents: write   # create tags & releases
@@ -49,15 +52,11 @@ jobs:
           if [ ! -f gradle.properties ]; then
             echo "gradle.properties not found"; exit 1
           fi
-          # Grab the first mcengine*.version= line (adjust the prefix if needed)
           version=$(grep -E '^(mcengine.*\.version)=' gradle.properties | head -n1 | cut -d'=' -f2- | tr -d '[:space:]')
           if [ -z "$version" ]; then
             echo "Could not detect version from gradle.properties"; exit 1
           fi
-          # Clean tag to be Git-safe
           tag=$(echo "$version" | tr -cd '[:alnum:]._-')
-          echo "Detected version: $version"
-          echo "Clean tag: $tag"
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
 
@@ -67,7 +66,7 @@ jobs:
             chmod +x ./gradlew
           fi
 
-      - name: Build artifacts
+      - name: Build (optional; safe if no JARs needed)
         run: |
           if [ -f ./gradlew ] && [ -f ./gradle/wrapper/gradle-wrapper.jar ]; then
             ./gradlew --no-daemon build
@@ -95,7 +94,7 @@ jobs:
           REPO_NAME: ${{ inputs.repo-name }}
           GITHUB_ACTOR: ${{ github.actor }}
 
-      - name: Collect JARs for release upload
+      - name: Collect JARs for release upload (ok if none)
         id: collect
         run: |
           mkdir -p upload
@@ -107,7 +106,6 @@ jobs:
           echo "EOF" >> $GITHUB_OUTPUT
 
       - name: Create tag & GitHub Release
-        if: success()
         run: |
           tag="${{ steps.version.outputs.tag }}"
           body="Automated release for version ${tag}"
@@ -144,19 +142,18 @@ jobs:
           EOF
           )
           echo "Release creation HTTP status: $http_status"
-          # If it's 422 (already exists), continue; otherwise fail on unexpected 4xx/5xx
           if [ "$http_status" -ge 400 ] && [ "$http_status" -ne 422 ]; then
             echo "Release API error:"; cat /tmp/release.json; exit 1
           fi
 
-      - name: Upload JARs to GitHub Release
-        if: success()
+      - name: Upload JARs to GitHub Release (skip if none)
+        if: success() && steps.collect.outputs.files != ''
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.version.outputs.tag }}
           name: Release ${{ steps.version.outputs.tag }}
           body: |
-            Includes extension JAR(s) from build/libs/.
+            Includes extension JAR(s) from build/libs/ if available.
           files: |
             upload/*.jar
         env:
