@@ -78,8 +78,8 @@ jobs:
           done < <(find . -type f -name "build.gradle" -print0)
 
           if [ ${#updated_files[@]} -gt 0 ]; then
-            git config user.name "${{ github.actor }}"
-            git config user.email "${{ github.actor }}@users.noreply.github.com"
+            git config user.name "agent-mcengine"
+            git config user.email "agent-mcengine@users.noreply.github.com"
             git add "${updated_files[@]}"
             git commit -m "chore: bump io.github.mcengine deps to $version"
             git remote set-url origin https://x-access-token:${{ secrets.USER_GITHUB_TOKEN }}@github.com/${{ github.repository }}
